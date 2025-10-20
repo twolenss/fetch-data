@@ -1,0 +1,20 @@
+.full-width-table {
+  width: 100%;
+  table-layout: fixed;  /* makes all columns fit into 100% */
+  word-wrap: break-word;
+}
+
+td.mat-cell, th.mat-header-cell {
+  white-space: normal;   /* allow wrapping */
+  word-break: break-word;
+  padding: 8px;
+}
+
+.mat-column-codeNo { width: 10%; }
+.mat-column-subjectTitle { width: 30%; }
+.mat-column-course { width: 15%; }
+.mat-column-yearLevel { width: 10%; }
+.mat-column-roomNumber { width: 10%; }
+.mat-column-time { width: 25%; }
+
+
