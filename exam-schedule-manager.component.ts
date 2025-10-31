@@ -3,9 +3,7 @@ import { ApiService } from './../../../api.service';
 import { GlobalService } from './../../../global.service';
 import { map } from 'rxjs/operators';
 import Swal from 'sweetalert2';
-import { SubjectGroup } from '../../../subject-code';
-import { DepartmentGroup } from '../../../subject-code';
-import { Room } from '../../../subject-code';
+import { SubjectGroup, DepartmentGroup, ProgramSchedule } from '../../../subject-code';
 
 @Component({
   selector: 'app-exam-schedule-manager',
@@ -14,45 +12,51 @@ import { Room } from '../../../subject-code';
 })
 export class ExamScheduleManagerComponent implements OnInit {
 
+  rawCodes: any[] = [];
   codes: any[] = [];
-  subjectId;
-  loadingDept;
-  activeTerm;
+  subjectId: string;
+  programs: ProgramSchedule[] = [];
+  activeTerm: string;
   startDate: Date | null = null;
-  generatedDates: string[] = [];
+  selectedDates: string[] = [];
+  daysWithTimeSlots: { [day: string]: string[] } = {};
+
   timeSlots: string[] = [
     '7:30 AM-9:00 AM', '9:00 AM-10:30 AM', '10:30 AM-12:00 PM', '12:00 PM-1:30 PM',
     '1:30 PM-3:00 PM', '3:00 PM-4:30 PM', '4:30 PM-6:00 PM', '6:00 PM-7:30 PM'
   ];
+  displayedColumns: string[] = ['program', ...this.timeSlots];
+
   termOptions = [
     { key: 1, value: '1st Term' },
     { key: 2, value: '2nd Term' },
     { key: 3, value: 'Summer' },
   ];
+
   combinedOptions: { label: string, value: string }[] = [];
-  generatedSchedule: any[] = [];
   departments: DepartmentGroup[] = [];
   swal = Swal;
+
+  usedSubjectIds: Set<string> = new Set();
+
+  selectedScheduleOutput: any[] = [];
+
   constructor(public api: ApiService, public global: GlobalService) {}
 
   ngOnInit() {
     this.combineYearTerm();
   }
 
-  // DATE GENERATION
-  date() {
-    const dayCount = 3;
-    const currentDate = new Date(this.startDate);
-    this.generatedDates = [];
-
-    for (let i = 0; i < dayCount; i++) {
-      this.generatedDates.push(currentDate.toDateString());
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
-    console.log("Generated Dates:", this.generatedDates);
+  selectTermYear() {
+  if (!this.activeTerm) {
+    this.global.swalAlertError("Please select term");
+      return;
+  }
+    this.loadSwal();
+    this.getCodeSummaryReport(this.activeTerm);
+    console.log('Selected term-year value:', this.activeTerm);
   }
 
-  // DYNAMIC YEAR-TERM COMBINATION
   combineYearTerm() {
     const currentYear = new Date().getFullYear();
     for (let y = currentYear - 1; y <= currentYear + 1; y++) {
@@ -64,65 +68,46 @@ export class ExamScheduleManagerComponent implements OnInit {
       }
     }
   }
-  
-  // FETCH CODE SUMMARY REPORT
+
+  onDateSelect(event: any) {
+    const selected = event.target.value;
+    if (!this.selectedDates.includes(selected)) {
+      this.selectedDates.push(selected);
+      this.daysWithTimeSlots[selected] = [...this.timeSlots];
+    }
+  }
+
+  removeDate(day: string) {
+    this.selectedDates = this.selectedDates.filter(d => d !== day);
+    delete this.daysWithTimeSlots[day];
+  }
+
   getCodeSummaryReport(sy) {
     this.api.getCodeSummaryReport(sy)
       .map(response => response.json())
       .subscribe(
         res => {
-          console.log('Raw Codes:', res.data);
-          setTimeout(() => {
-            Swal.close();
-            this.codes = this.getUniqueSubjectIds(res.data);
-            console.log('Processed Codes:', this.codes);
-          });
+          this.rawCodes = res.data;
+          Swal.close();
+          this.codes = this.getUniqueSubjectIds(res.data);
+          this.programs = this.getUniquePrograms(res.data);
         },
         Error => {
           this.global.swalAlertError(Error);
         }
       );
-       this.date();
   }
 
-  // SweetAlert Loading
-  loadSwal() {
-    this.swal.fire({
-      title: 'Loading',
-      text: '',
-      type: 'info',
-      allowOutsideClick: false,
-      allowEscapeKey: false,
-      onOpen: () => {
-        Swal.showLoading();
-      }
-    });
-  }
-
-  // SELECTED TERM & YEAR
-  selectTermYear() {
-    if (!this.activeTerm) {
-      this.global.swalAlertError("Please select term");
-      return;
-    }
-    this.loadSwal();
-    this.getCodeSummaryReport(this.activeTerm);
-    console.log('Selected term-year value:', this.activeTerm);
-  }
-
-  // UNIQUE SUBJECT IDS
   getUniqueSubjectIds(data: any[]): SubjectGroup[] {
     const groupedID: SubjectGroup[] = [];
-      data.forEach(item => {
+    data.forEach(item => {
       const existing = groupedID.find(s => s.subjectId === item.subjectId);
-
       if (existing) {
         existing.codes.push({
           codeNo: item.codeNo,
           course: item.course,
           year: item.yearLevel,
           dept: item.dept
-
         });
       } else {
         groupedID.push({
@@ -140,52 +125,104 @@ export class ExamScheduleManagerComponent implements OnInit {
     return groupedID;
   }
 
-  getRooms(){
-    const rooms: Room[] = []
-    data
+  getUniquePrograms(data: any[]): ProgramSchedule[] {
+  const groupedProg: ProgramSchedule[] = [];
+  data.forEach(item => {
+    const existingProgram = groupedProg.find(p => p.program === item.course && p.year === item.yearLevel);
 
+    const subjectData = {
+      subjectId: item.subjectId,
+      subjectTitle: item.subjectTitle,
+      codeNo: item.codeNo
+    };
+
+    if (existingProgram) {
+      const exists = existingProgram.subjects.find(s => s.subjectId === subjectData.subjectId);
+      if (!exists) existingProgram.subjects.push(subjectData);
+    } else {
+      groupedProg.push({
+        program: item.course,
+        year: item.yearLevel,
+        subjects: [subjectData],
+        schedule: {},
+        remainingSubjects: 0 // initialize
+      });
+    }
+  });
+
+  // Sort and initialize schedules
+  groupedProg.sort((a, b) => a.program.localeCompare(b.program) || a.year - b.year);
+  groupedProg.forEach(p => {
+    this.timeSlots.forEach(slot => (p.schedule[slot] = ''));
+    p.remainingSubjects = p.subjects.length; // ✅ set total subjects
+  });
+
+  console.log('Grouped Programs (Excel-style):', groupedProg);
+  return groupedProg;
   }
 
-  // GREEDY SCHEDULER FUNCTION
-  generateSchedule() {
-    if (this.codes.length === 0) {
-      this.global.swalAlertError("No subjects to schedule.");
-      return;
+ onSubjectSelect(prog: ProgramSchedule, slot: string) {
+  const subjectId = prog.schedule[slot];
+  if (!subjectId) return;
+
+  // ✅ Check if there was an old subject in that slot (for re-counting)
+  const previousSubject = prog.schedule[slot];
+  if (previousSubject && previousSubject !== subjectId) {
+    this.usedSubjectIds.delete(previousSubject);
+  }
+
+  // ✅ Add new selected subject
+  this.usedSubjectIds.add(subjectId);
+
+  // ✅ Apply same subject to all programs that have this subject ID
+  this.programs.forEach(p => {
+    const sameSubj = p.subjects.find(s => s.subjectId === subjectId);
+    if (sameSubj) {
+      p.schedule[slot] = subjectId;
     }
-    const days = [1, 2, 3];
-    const usedSlots = new Set();
-    let currentDayIndex = 0;
-    let currentTimeIndex = 0;
+  });
 
-    this.generatedSchedule = [];
+  // ✅ Recalculate remaining subjects for each program
+  this.programs.forEach(p => {
+    const scheduledIds = new Set(Object.values(p.schedule).filter(v => v));
+    p.remainingSubjects = p.subjects.length - scheduledIds.size;
+  });
 
-    for (const subject of this.codes) {
-      const day = days[currentDayIndex];
-      const time = this.timeSlots[currentTimeIndex];
-      const slotKey = `${day}-${time}`;
+  // ✅ Rebuild output array
+  this.selectedScheduleOutput = this.programs.map(p => ({
+    program: p.program,
+    year: p.year,
+    subjects: Object.keys(p.schedule)
+      .filter(slot => p.schedule[slot])
+      .map(slot => {
+        const subjId = p.schedule[slot];
+        const subj = p.subjects.find(s => s.subjectId === subjId);
+        return {
+          subjectId: subj ? subj.subjectId : '',
+          subjectTitle: subj ? subj.subjectTitle : '',
+          codeNo: subj ? subj.codeNo : '',
+          sched: slot
+        };
+      })
+  }));
 
-      if (!usedSlots.has(slotKey)) {
-        this.generatedSchedule.push({
-          subjectId: subject.subjectId,
-          title: subject.subjectTitle,
-          day,
-          time,
-          codes: subject.codes,
-        });
-        usedSlots.add(slotKey);
+  console.log("Updated Output Array:", this.selectedScheduleOutput);
+  }
+
+  saveSchedule() {
+    console.log("Final Schedule Output:", this.selectedScheduleOutput);
+    this.global.swalSuccess("Schedule saved successfully!");
+  }
+  loadSwal() {
+    this.swal.fire({
+      title: 'Loading',
+      text: '',
+      type: 'info',
+      allowOutsideClick: false,
+      allowEscapeKey: false,
+      onOpen: () => {
+        Swal.showLoading();
       }
-
-      // Move to next slot
-      currentTimeIndex++;
-      if (currentTimeIndex >= this.timeSlots.length) {
-        currentTimeIndex = 0;
-        currentDayIndex++;
-        if (currentDayIndex >= days.length) {
-          currentDayIndex = 0; 
-        }
-      }
-    }
-    console.log("Generated Schedule:", this.generatedSchedule);
-    this.global.swalSuccess("Schedule generated successfully!");
+    });
   }
 }
