@@ -20,6 +20,7 @@ export class ExamScheduleManagerComponent implements OnInit {
   startDate: Date | null = null;
   selectedDates: string[] = [];
   daysWithTimeSlots: { [day: string]: string[] } = {};
+  selectedDate: Date | null = null;
 
   timeSlots: string[] = [
     '7:30 AM-9:00 AM', '9:00 AM-10:30 AM', '10:30 AM-12:00 PM', '12:00 PM-1:30 PM',
@@ -70,10 +71,10 @@ export class ExamScheduleManagerComponent implements OnInit {
   }
 
   onDateSelect(event: any) {
-    const selected = event.target.value;
+    const selected = event.value.toLocaleDateString('en-CA') // yyyy-mm-dd
     if (!this.selectedDates.includes(selected)) {
       this.selectedDates.push(selected);
-      this.daysWithTimeSlots[selected] = [...this.timeSlots];
+      this.daysWithTimeSlots[selected] = [...this.timeSlots]; // clone slots for this date
     }
   }
 
@@ -154,65 +155,68 @@ export class ExamScheduleManagerComponent implements OnInit {
   groupedProg.sort((a, b) => a.program.localeCompare(b.program) || a.year - b.year);
   groupedProg.forEach(p => {
     this.timeSlots.forEach(slot => (p.schedule[slot] = ''));
-    p.remainingSubjects = p.subjects.length; // ✅ set total subjects
+    p.remainingSubjects = p.subjects.length; // set total subjects
   });
 
   console.log('Grouped Programs (Excel-style):', groupedProg);
   return groupedProg;
   }
 
- onSubjectSelect(prog: ProgramSchedule, slot: string) {
-  const subjectId = prog.schedule[slot];
-  if (!subjectId) return;
+  onSubjectSelect(prog: ProgramSchedule, slot: string, day: string) {
+    const subjectId = prog.schedule[day + '_' + slot];
+    if (!subjectId) return;
 
-  // ✅ Check if there was an old subject in that slot (for re-counting)
-  const previousSubject = prog.schedule[slot];
-  if (previousSubject && previousSubject !== subjectId) {
-    this.usedSubjectIds.delete(previousSubject);
-  }
-
-  // ✅ Add new selected subject
-  this.usedSubjectIds.add(subjectId);
-
-  // ✅ Apply same subject to all programs that have this subject ID
-  this.programs.forEach(p => {
-    const sameSubj = p.subjects.find(s => s.subjectId === subjectId);
-    if (sameSubj) {
-      p.schedule[slot] = subjectId;
+    const previousSubject = prog.schedule[day + '_' + slot];
+    if (previousSubject && previousSubject !== subjectId) {
+      this.usedSubjectIds.delete(previousSubject);
     }
-  });
+    this.usedSubjectIds.add(subjectId);
 
-  // ✅ Recalculate remaining subjects for each program
-  this.programs.forEach(p => {
-    const scheduledIds = new Set(Object.values(p.schedule).filter(v => v));
-    p.remainingSubjects = p.subjects.length - scheduledIds.size;
-  });
+    // Apply same subject to all programs for this specific date and slot
+    this.programs.forEach(p => {
+      const sameSubj = p.subjects.find(s => s.subjectId === subjectId);
+      if (sameSubj) {
+        p.schedule[day + '_' + slot] = subjectId;
+      }
+    });
 
-  // ✅ Rebuild output array
-  this.selectedScheduleOutput = this.programs.map(p => ({
-    program: p.program,
-    year: p.year,
-    subjects: Object.keys(p.schedule)
-      .filter(slot => p.schedule[slot])
-      .map(slot => {
-        const subjId = p.schedule[slot];
-        const subj = p.subjects.find(s => s.subjectId === subjId);
-        return {
-          subjectId: subj ? subj.subjectId : '',
-          subjectTitle: subj ? subj.subjectTitle : '',
-          codeNo: subj ? subj.codeNo : '',
-          sched: slot
-        };
-      })
-  }));
+    // Recalculate remaining subjects
+    this.programs.forEach(p => {
+      const scheduledIds = new Set(
+        Object.values(p.schedule).filter(v => v)
+      );
+      p.remainingSubjects = p.subjects.length - scheduledIds.size;
+    });
 
-  console.log("Updated Output Array:", this.selectedScheduleOutput);
+    // Build output grouped by date
+    this.selectedScheduleOutput = this.selectedDates.map(day => ({
+      date: day,
+      programs: this.programs.map(p => ({
+        program: p.program,
+        year: p.year,
+        subjects: Object.keys(p.schedule)
+          .filter(key => key.startsWith(day + '_') && p.schedule[key])
+          .map(key => {
+            const subjId = p.schedule[key];
+            const subj = p.subjects.find(s => s.subjectId === subjId);
+            return {
+              subjectId: subj ? subj.subjectId : '',
+              subjectTitle: subj ? subj.subjectTitle : '',
+              codeNo: subj ? subj.codeNo : '',
+              sched: key.replace(day + '_', '')
+            };
+          })
+      }))
+    }));
+
+    console.log("Updated Output:", this.selectedScheduleOutput);
   }
 
   saveSchedule() {
     console.log("Final Schedule Output:", this.selectedScheduleOutput);
     this.global.swalSuccess("Schedule saved successfully!");
   }
+  
   loadSwal() {
     this.swal.fire({
       title: 'Loading',
